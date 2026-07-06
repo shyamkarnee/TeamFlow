@@ -1,0 +1,269 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Reusable Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // Get the user's role from their profile document
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // Admins have highest privilege
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'shyamsundhrkarne@gmail.com' ||
+        getUserRole() == 'Admin'
+      );
+    }
+
+    // Managers or Admins can perform management actions
+    function isManager() {
+      return isSignedIn() && (
+        request.auth.token.email == 'shyamsundhrkarne@gmail.com' ||
+        getUserRole() == 'Manager' ||
+        getUserRole() == 'Admin'
+      );
+    }
+
+    // --- Schema and Shape Validation Helpers ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role', 'createdAt']) &&
+             data.keys().size() == 5 &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 128 &&
+             data.name is string && data.name.size() <= 128 &&
+             data.role is string && data.role in ['Admin', 'Manager', 'Developer'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['id', 'name', 'description', 'managerId', 'members', 'createdAt']) &&
+             data.keys().size() == 6 &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 128 && data.name.size() > 0 &&
+             data.description is string && data.description.size() <= 2000 &&
+             data.managerId is string && data.managerId.size() <= 128 &&
+             data.members is list && data.members.size() <= 20 &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidProjectMember(data) {
+      return data.keys().hasAll(['userId', 'role']) &&
+             data.keys().size() == 2 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.role is string && data.role in ['Manager', 'Developer'];
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'projectId', 'title', 'description', 'assignedTo', 'status', 'dependencies', 'createdAt', 'updatedAt']) &&
+             (data.keys().size() == 9 || (data.keys().size() == 10 && data.reviewerComment is string)) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.projectId is string && data.projectId.size() <= 128 &&
+             data.title is string && data.title.size() <= 256 && data.title.size() > 0 &&
+             data.description is string && data.description.size() <= 5000 &&
+             data.assignedTo is string && data.assignedTo.size() <= 128 &&
+             data.status is string && data.status in ['To Do', 'In Progress', 'Review', 'Completed'] &&
+             data.dependencies is list && data.dependencies.size() <= 10 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidIncident(data) {
+      return data.keys().hasAll(['id', 'projectId', 'title', 'description', 'reportedBy', 'assignedTo', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().size() == 9 &&
+             data.id is string && data.id.size() <= 128 &&
+             data.projectId is string && data.projectId.size() <= 128 &&
+             data.title is string && data.title.size() <= 256 && data.title.size() > 0 &&
+             data.description is string && data.description.size() <= 5000 &&
+             data.reportedBy is string && data.reportedBy.size() <= 128 &&
+             data.assignedTo is string && data.assignedTo.size() <= 128 &&
+             data.status is string && data.status in ['Open', 'In Progress', 'Resolved', 'Closed'] &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'userId', 'message', 'read', 'type', 'createdAt']) &&
+             data.keys().size() == 6 &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.message is string && data.message.size() <= 1000 &&
+             data.read is bool &&
+             data.type is string && data.type.size() <= 128 &&
+             data.createdAt is timestamp;
+    }
+
+    // --- Relationship Checking Helpers ---
+
+    function getProject(projId) {
+      return get(/databases/$(database)/documents/projects/$(projId)).data;
+    }
+
+    function canAccessProject(projId) {
+      return isSignedIn() && (
+        getProject(projId).managerId == request.auth.uid ||
+        request.auth.uid in getProject(projId).members ||
+        isAdmin()
+      );
+    }
+
+    // --- Collection Matching Blocks ---
+
+    // 1. Users Collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn();
+      
+      // User registration: can only register own account and must start as Developer
+      allow create: if isSignedIn() && request.auth.uid == userId && 
+                    isValidUser(incoming()) && 
+                    incoming().role == 'Developer' &&
+                    incoming().createdAt == request.time;
+                    
+      // User update: Admins can update roles; users can update their profile but NOT change their role
+      allow update: if isSignedIn() && isValidUser(incoming()) && (
+        (request.auth.uid == userId && incoming().role == resource.data.role) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // 2. Projects Collection
+    match /projects/{projectId} {
+      allow get: if canAccessProject(projectId) && isValidId(projectId);
+      allow list: if isSignedIn() && (
+        resource.data.managerId == request.auth.uid ||
+        request.auth.uid in resource.data.members ||
+        isAdmin()
+      );
+
+      // Only Managers or Admins can create/delete projects
+      allow create: if isManager() && isValidId(projectId) &&
+                    isValidProject(incoming()) &&
+                    incoming().managerId == request.auth.uid &&
+                    incoming().createdAt == request.time;
+
+      allow update: if isValidProject(incoming()) && (
+        (isManager() && getProject(projectId).managerId == request.auth.uid) ||
+        isAdmin()
+      ) && incoming().createdAt == resource.data.createdAt; // createdAt immutable
+
+      allow delete: if isAdmin() || (isManager() && resource.data.managerId == request.auth.uid);
+
+      // 3. Project Members Subcollection (optional safety layer)
+      match /members/{memberId} {
+        allow read: if canAccessProject(projectId) && isValidId(memberId);
+        allow write: if isManager() && canAccessProject(projectId) && isValidId(memberId) && isValidProjectMember(incoming());
+      }
+
+      // 4. Tasks Subcollection
+      match /tasks/{taskId} {
+        allow get: if canAccessProject(projectId) && isValidId(taskId);
+        allow list: if canAccessProject(projectId);
+
+        // Only managers of the project can create/delete tasks
+        allow create: if isManager() && canAccessProject(projectId) && 
+                      isValidId(taskId) && isValidTask(incoming()) &&
+                      incoming().projectId == projectId &&
+                      incoming().createdAt == request.time;
+
+        // Tasks Update state machine
+        allow update: if canAccessProject(projectId) && isValidTask(incoming()) && (
+          // Immutables cannot change
+          incoming().id == resource.data.id &&
+          incoming().projectId == resource.data.projectId &&
+          incoming().createdAt == resource.data.createdAt &&
+          incoming().updatedAt == request.time && (
+            // Option A: Manager/Admin can change any non-immutable fields
+            isManager() ||
+            
+            // Option B: Developer can only update the "status" field on tasks assigned to them
+            (
+              resource.data.assignedTo == request.auth.uid &&
+              incoming().diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+              // Devs can move from To Do -> In Progress -> Review, but NOT directly to Completed
+              incoming().status in ['To Do', 'In Progress', 'Review'] &&
+              // Cannot jump status (e.g. from To Do directly to Review)
+              (
+                (resource.data.status == 'To Do' && incoming().status == 'In Progress') ||
+                (resource.data.status == 'In Progress' && incoming().status == 'Review') ||
+                (resource.data.status == 'Review' && incoming().status == 'In Progress') // sent back
+              )
+            )
+          )
+        );
+
+        allow delete: if isManager() && canAccessProject(projectId) && isValidId(taskId);
+      }
+
+      // 5. Incidents Subcollection
+      match /incidents/{incidentId} {
+        allow get: if canAccessProject(projectId) && isValidId(incidentId);
+        allow list: if canAccessProject(projectId);
+
+        // Any project member can report an incident
+        allow create: if canAccessProject(projectId) && isValidId(incidentId) &&
+                      isValidIncident(incoming()) &&
+                      incoming().projectId == projectId &&
+                      incoming().reportedBy == request.auth.uid &&
+                      incoming().createdAt == request.time;
+
+        allow update: if canAccessProject(projectId) && isValidIncident(incoming()) && (
+          incoming().id == resource.data.id &&
+          incoming().projectId == resource.data.projectId &&
+          incoming().reportedBy == resource.data.reportedBy &&
+          incoming().createdAt == resource.data.createdAt &&
+          incoming().updatedAt == request.time && (
+            isManager() ||
+            // Assigned developer can update incident status
+            (
+              resource.data.assignedTo == request.auth.uid &&
+              incoming().diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            )
+          )
+        );
+
+        allow delete: if isManager() && canAccessProject(projectId) && isValidId(incidentId);
+      }
+    }
+
+    // 6. User Notifications Collection
+    match /users/{userId}/notifications/{notificationId} {
+      allow get, list: if isSignedIn() && request.auth.uid == userId && isValidId(notificationId);
+      
+      // System trigger creation: allow writing if signing in or from another valid member
+      allow create: if isSignedIn() && isValidId(notificationId) && 
+                    isValidNotification(incoming()) &&
+                    incoming().createdAt == request.time;
+
+      // Users can only mark their own notifications as read
+      allow update: if isSignedIn() && request.auth.uid == userId && 
+                    isValidNotification(incoming()) &&
+                    incoming().diff(resource.data).affectedKeys().hasOnly(['read']);
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(notificationId);
+    }
+  }
+}

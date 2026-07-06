@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information and role-based permissions.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique Firebase Auth identifier." },
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string", "description": "User's full display name." },
+        "role": { "type": "string", "enum": ["Admin", "Manager", "Developer"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "role", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A collaborative work project.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "managerId": { "type": "string", "description": "User ID of the assigned Manager." },
+        "members": { "type": "array", "description": "Array of member user IDs (max 20)." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "description", "managerId", "members", "createdAt"]
+    },
+    "ProjectMember": {
+      "title": "Project Member",
+      "description": "Represents membership of a user in a project.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string" }
+      },
+      "required": ["userId", "role"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "An actionable work item within a project.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "status": { "type": "string", "enum": ["To Do", "In Progress", "Review", "Completed"] },
+        "dependencies": { "type": "array", "description": "Array of parent task IDs that must be Completed first." },
+        "reviewerComment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "projectId", "title", "description", "assignedTo", "status", "dependencies", "createdAt", "updatedAt"]
+    },
+    "Incident": {
+      "title": "Incident",
+      "description": "A blocker or issue reported for a project.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "reportedBy": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "status": { "type": "string", "enum": ["Open", "In Progress", "Resolved", "Closed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "projectId", "title", "description", "reportedBy", "assignedTo", "status", "createdAt", "updatedAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "System-generated notification alerts for users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "message": { "type": "string" },
+        "read": { "type": "boolean" },
+        "type": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "message", "read", "type", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles database."
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Projects list."
+    },
+    "/projects/{projectId}/members/{memberId}": {
+      "schema": "ProjectMember",
+      "description": "Members assigned to a project."
+    },
+    "/projects/{projectId}/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Tasks associated with a project."
+    },
+    "/projects/{projectId}/incidents/{incidentId}": {
+      "schema": "Incident",
+      "description": "Incidents raised against a project."
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Notifications for a specific user."
+    }
+  }
+}

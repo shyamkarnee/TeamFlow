@@ -1,0 +1,6 @@
+{
+  "name": "TeamFlow",
+  "description": "A collaborative project management and incident tracking platform with task workflows, dependency enforcement, and detailed analytics reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
