@@ -2,7 +2,6 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { 
   User as FirebaseUser, 
   onAuthStateChanged, 
-  signInWithPopup, 
   signOut as fbSignOut,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword
@@ -16,7 +15,7 @@ import {
   onSnapshot, 
   serverTimestamp 
 } from "firebase/firestore";
-import { auth, db, googleProvider, handleFirestoreError, OperationType } from "../firebase";
+import { auth, db, handleFirestoreError, OperationType } from "../firebase";
 import { UserProfile, UserRole } from "../types";
 
 interface AuthContextType {
@@ -24,7 +23,6 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   users: UserProfile[]; // all registered users in the system for assignments
-  signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string, name: string, role: UserRole) => Promise<void>;
   signInWithDemo: (role: UserRole) => Promise<void>;
@@ -103,14 +101,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, [user]);
 
-  const signInWithGoogle = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.GET, "auth/popup");
-    }
-  };
-
   const signInWithEmail = async (email: string, password: string) => {
     setLoading(true);
     try {
@@ -160,8 +150,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const name = `Demo ${role}`;
     
     try {
+      // 1. Try to sign in first
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
+      // 2. If sign-in fails (e.g. wrong password or user-not-found/invalid-credential), try to register
       try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const fbUser = userCredential.user;
@@ -177,36 +169,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await setDoc(userDocRef, newProfile);
         setProfile(newProfile);
       } catch (signUpErr: any) {
-        if (signUpErr.code === "auth/email-already-in-use" || signUpErr.message?.includes("email-already-in-use")) {
+        // 3. If registration fails (e.g. email already in use, invalid-credential, or weak-password),
+        // we rotate the suffix and register a completely fresh email address!
+        console.warn("Demo account collision or registration error. Rotating suffix and registering fresh...", signUpErr);
+        
+        let success = false;
+        let attempts = 0;
+        let lastErr = signUpErr;
+        
+        while (!success && attempts < 5) {
+          attempts++;
+          const newSuffix = Math.random().toString(36).substring(2, 8);
+          localStorage.setItem(storageKey, newSuffix);
+          const newEmail = `${role.toLowerCase()}.${newSuffix}@teamflow.com`;
+          
           try {
-            await signInWithEmailAndPassword(auth, email, password);
-          } catch (retryErr) {
-            console.warn("Credential collision or wrong password on demo account. Rotating suffix...");
-            const newSuffix = Math.random().toString(36).substring(2, 8);
-            localStorage.setItem(storageKey, newSuffix);
-            const newEmail = `${role.toLowerCase()}.${newSuffix}@teamflow.com`;
-            try {
-              const userCredential = await createUserWithEmailAndPassword(auth, newEmail, password);
-              const fbUser = userCredential.user;
-              
-              const userDocRef = doc(db, "users", fbUser.uid);
-              const newProfile: UserProfile = {
-                uid: fbUser.uid,
-                email: fbUser.email || newEmail,
-                name: name,
-                role: role,
-                createdAt: serverTimestamp()
-              };
-              await setDoc(userDocRef, newProfile);
-              setProfile(newProfile);
-            } catch (fallbackErr: any) {
-              console.error("Critical fallback demo registration failed:", fallbackErr);
-              throw fallbackErr;
-            }
+            const userCredential = await createUserWithEmailAndPassword(auth, newEmail, password);
+            const fbUser = userCredential.user;
+            
+            const userDocRef = doc(db, "users", fbUser.uid);
+            const newProfile: UserProfile = {
+              uid: fbUser.uid,
+              email: fbUser.email || newEmail,
+              name: name,
+              role: role,
+              createdAt: serverTimestamp()
+            };
+            await setDoc(userDocRef, newProfile);
+            setProfile(newProfile);
+            success = true;
+          } catch (fallbackErr: any) {
+            console.error(`Attempt ${attempts} failed to create fallback demo user:`, fallbackErr);
+            lastErr = fallbackErr;
           }
-        } else {
-          console.error("Failed to auto-register demo user:", signUpErr);
-          throw signUpErr;
+        }
+        
+        if (!success) {
+          throw lastErr;
         }
       }
     } finally {
@@ -256,7 +255,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile,
         loading,
         users,
-        signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,
         signInWithDemo,

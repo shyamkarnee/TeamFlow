@@ -104,7 +104,8 @@ export async function createTask(
   title: string, 
   description: string, 
   assignedTo: string, 
-  dependencies: string[]
+  dependencies: string[],
+  status: TaskStatus = "To Do"
 ) {
   const taskRef = doc(collection(db, "projects", projectId, "tasks"));
   const task: Task = {
@@ -113,7 +114,7 @@ export async function createTask(
     title,
     description,
     assignedTo,
-    status: "To Do",
+    status,
     dependencies,
     createdAt: serverTimestamp() as any,
     updatedAt: serverTimestamp() as any
